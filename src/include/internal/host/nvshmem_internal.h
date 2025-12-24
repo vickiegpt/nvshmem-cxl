@@ -62,7 +62,28 @@
 #define NVSHMEMI_TRANSPORT_OPS_IS_ADD_DEVICE_REMOTE_MEM(transport) \
     ((transport)->host_ops.add_device_remote_mem_handles != NULL)
 
-enum { NVSHMEMI_HEAP_KIND_VIDMEM = 0, NVSHMEMI_HEAP_KIND_SYSMEM };
+enum {
+    NVSHMEMI_HEAP_KIND_VIDMEM = 0,       /* GPU video memory */
+    NVSHMEMI_HEAP_KIND_SYSMEM = 1,       /* System memory (shared) */
+    NVSHMEMI_HEAP_KIND_CXL_TYPE3 = 2,    /* CXL Type 3 memory pool */
+    NVSHMEMI_HEAP_KIND_CXL_COMBINED = 3  /* GPU (Type 2) + CXL (Type 3) combined */
+};
+
+/* CXL device type enumeration */
+enum nvshmemi_cxl_device_type {
+    NVSHMEMI_CXL_DEV_TYPE_NONE = 0,
+    NVSHMEMI_CXL_DEV_TYPE_1 = 1,    /* CXL.io only (PCIe-like) */
+    NVSHMEMI_CXL_DEV_TYPE_2 = 2,    /* CXL.cache + CXL.mem (GPU with HDM) */
+    NVSHMEMI_CXL_DEV_TYPE_3 = 3,    /* CXL.mem only (memory expander) */
+    NVSHMEMI_CXL_DEV_TYPE_2_3 = 4   /* Type 2 + Type 3 combined */
+};
+
+/* CXL memory type enumeration */
+enum nvshmemi_cxl_mem_type {
+    NVSHMEMI_CXL_MEM_HDM = 0,   /* Host-managed Device Memory (GPU VRAM via CXL) */
+    NVSHMEMI_CXL_MEM_SPM = 1,   /* Shared Persistent Memory */
+    NVSHMEMI_CXL_MEM_POOL = 2   /* Type 3 memory pool */
+};
 
 typedef struct nvshmem_local_buf_handle {
     void *ptr;

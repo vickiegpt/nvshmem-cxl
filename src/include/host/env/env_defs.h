@@ -354,4 +354,20 @@ NVSHMEMI_ENV_DEF(IB_ENABLE_IBGDA, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
                  "Set to enable GPU-initiated communication transport.")
 #endif
 
+/** CXL Transport **/
+NVSHMEMI_ENV_DEF(ENABLE_CXL_TRANSPORT, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Enable CXL transport for GPU (Type 2) to CXL memory (Type 3) connectivity. "
+                 "Requires CXL-capable GPU and CXL memory devices.")
+NVSHMEMI_ENV_DEF(CXL_DAX_PATH, string, "", NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Path to CXL DAX device for Type 3 memory (e.g., /dev/dax0.0). "
+                 "If not specified, NVSHMEM will auto-discover available CXL DAX devices.")
+NVSHMEMI_ENV_DEF(CXL_HEAP_SIZE, size, (size_t)(256 * 1024 * 1024), NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Size of CXL Type 3 memory to allocate for symmetric heap (default 256MB)")
+NVSHMEMI_ENV_DEF(CXL_P2P_THRESHOLD, size, (size_t)(256 * 1024), NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Minimum transfer size to use P2P DMA instead of CUDA memcpy (default 256KB). "
+                 "P2P DMA has higher overhead but better throughput for large transfers.")
+NVSHMEMI_ENV_DEF(CXL_PREFER_P2P_DMA, bool, true, NVSHMEMI_ENV_CAT_HIDDEN,
+                 "Prefer P2P DMA for GPU-CXL transfers when available. "
+                 "Set to false to always use CUDA mapped memory.")
+
 #endif

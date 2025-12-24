@@ -25,9 +25,10 @@
 #include "non_abi/nvshmem_build_options.h"                                 // for NVSHMEM_IBGDA...
 #include "non_abi/nvshmem_version.h"                                       // for NVSHMEM_TRANS...
 #include "topo.h"                                                          // for nvshmemi_get_...
+#include "cxl.h"                                                           // for nvshmemt_cxl_init
 
 #define TRANSPORT_STRING_MAX_LENGTH 8
-#define NVSHMEM_TRANSPORT_COUNT 6
+#define NVSHMEM_TRANSPORT_COUNT 7  /* Added CXL transport */
 #define IB_TRANSPORT_STRING "ibrc"
 #define UCX_TRANSPORT_STRING "ucx"
 #define DEVX_TRANSPORT_STRING "ibdevx"
@@ -290,6 +291,37 @@ transport_fail:
     }
 #endif
 
+    /* CXL Transport Initialization */
+    if (nvshmemi_options.ENABLE_CXL_TRANSPORT) {
+        status = nvshmemi_local_mem_cache_init(&tmp_cache_ptr);
+        NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMI_INTERNAL_ERROR, out,
+                              "Unable to allocate transport mem cache for CXL.\n");
+
+        status = nvshmemt_cxl_init(&transports[index]);
+        if (!status && transports[index]->is_successfully_initialized) {
+            transports[index]->boot_handle = &nvshmemi_boot_handle;
+            transports[index]->heap_base = state->heap_obj->get_base();
+            transports[index]->cap = (int *)calloc(state->npes, sizeof(int));
+            transports[index]->index = index;
+            transports[index]->my_pe = nvshmemi_state->mype;
+            transports[index]->n_pes = nvshmemi_state->npes;
+            transports[index]->log2_cumem_granularity =
+                nvshmemi_state->heap_obj->get_log2_cumem_granularity();
+            transports[index]->cache_handle = (void *)tmp_cache_ptr;
+            transports[index]->alias_va_map = state->heap_obj->get_alias_va_map();
+            transports[index]->egm_map = state->heap_obj->get_egm_map();
+            if (transports[index]->max_op_len == 0) transports[index]->max_op_len = SIZE_MAX;
+            INFO(NVSHMEM_INIT, "CXL transport initialized successfully.");
+            index++;
+        } else {
+            nvshmemi_local_mem_cache_fini(tmp_cache_ptr);
+            INFO(NVSHMEM_TRANSPORT, "CXL transport init failed or not available");
+            status = 0;  /* Non-fatal, continue without CXL */
+        }
+    } else {
+        INFO(NVSHMEM_INIT, "CXL transport disabled by environment.");
+    }
+
     if (index == 0) {
         NVSHMEMI_ERROR_PRINT("Unable to initialize any transports. returning error.");
         status = NVSHMEMX_ERROR_INTERNAL;
@@ -314,6 +346,11 @@ out:
                  nvshmemi_options.REMOTE_TRANSPORT);
         }
 #endif
+        if (nvshmemi_options.ENABLE_CXL_TRANSPORT) {
+            INFO(NVSHMEM_INIT,
+                 "Successfully initialized CXL transport for GPU (Type 2) to CXL memory (Type 3) "
+                 "P2P DMA connectivity.");
+        }
     }
     return status;
 }

@@ -337,6 +337,7 @@ set(NVSHMEM_HOST_SOURCES
     host/proxy/proxy.cpp
     host/transport/transport.cpp
     host/transport/p2p/p2p.cpp
+    host/transport/cxl/cxl.cpp
     host/init/cudawrap.cpp
     host/init/init.cu
     host/init/init_nvtx.cpp
@@ -344,6 +345,7 @@ set(NVSHMEM_HOST_SOURCES
     host/init/query_host.cpp
     host/mem/mem.cpp
     host/mem/mem_heap.cpp
+    host/mem/mem_heap_cxl.cpp
     host/mem/mem_transport.cpp
     host/team/team.cu
     host/team/team_internal.cpp
@@ -366,6 +368,7 @@ target_include_directories(
           host/coll
           host/stream/coll
           host/topo
+          host/transport/cxl
   INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
             $<INSTALL_INTERFACE:include>
 )
