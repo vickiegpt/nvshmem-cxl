@@ -7,14 +7,15 @@
  * Manages symmetric heap allocated from CXL memory expansion devices
  */
 
-#include "internal/host/nvshmemi_symmetric_heap.hpp"
 #include "internal/host/nvshmem_internal.h"
-#include "internal/host/debug.h"
 #include "internal/host/util.h"
+#include "internal/host/debug.h"
+#include "internal/host/nvshmemi_symmetric_heap.hpp"
 #include "internal/host_transport/cudawrap.h"
 #include <sys/mman.h>
 #include <cstring>
 #include <cuda_runtime.h>
+#include <cerrno>
 
 /* Helper macro to access mem_handle reserved field as uint64_t array */
 #define MEM_HANDLE_DATA(h) ((uint64_t*)((h)->reserved))
