@@ -1651,7 +1651,7 @@ int nvshmemi_copy_internal_team_pe_info(nvshmemi_team_t *myteam, nvshmemi_team_t
     team_info->team_index_array =
         nvshmemi_get_pe_info_array_ptr(nvshmemi_team_creation_psync, nvshmemi_state->mype);
 
-    if (nvshmemi_device_state.symmetric_heap_kind == NVSHMEMI_HEAP_KIND_SYSMEM) {
+    if (nvshmemi_host_heap_kind != NVSHMEMI_HEAP_KIND_VIDMEM) {
         memcpy(&nvshmemi_team_creation_psync->pe_info[nvshmemi_state->mype], team_info,
                sizeof(nvshmemi_team_creation_pe_info));
     } else {

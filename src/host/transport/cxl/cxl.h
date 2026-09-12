@@ -231,6 +231,23 @@ typedef struct {
 /* Transport initialization */
 int nvshmemt_cxl_init(nvshmem_transport_t *transport);
 
+/* CXL symmetric heap info (defined in mem_heap_cxl.cpp).  When
+ * NVSHMEM_HEAP_KIND=CXL is active, the symmetric heap is one shared-memory
+ * slab mapped into every same-node PE and bound to the CXL NUMA node.  The
+ * transport resolves remote heap addresses through its own mapping of that
+ * slab, so no cross-process registration is needed. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void *nvshmemi_cxl_heap_slab_base(void);
+size_t nvshmemi_cxl_heap_window_size(void);
+int nvshmemi_cxl_heap_numa_node(void);
+
+#ifdef __cplusplus
+}
+#endif
+
 /* Transport operations */
 int nvshmemt_cxl_can_reach_peer(int *access, struct nvshmem_transport_pe_info *peer_info,
                                  nvshmem_transport_t transport);

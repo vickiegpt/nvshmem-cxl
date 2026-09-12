@@ -259,6 +259,14 @@ static int discover_cxl_type3_devices(transport_cxl_state_t *state) {
     state->devices[0].hdm_size = 0;  /* Will be determined by buffer allocation */
     state->devices[0].cache_coherent = (state->cxl_info.cxlVersion >= 2);
     state->devices[0].back_invalidate = state->cxl_info.bMemoryExpander;
+    if (nvshmemi_options.CXL_FORCE) {
+        /* Forced NUMA-tier mode: the tier is ordinary cache-coherent host RAM
+         * on the CXL node; CPU and GPU atomics against it are coherent. */
+        state->devices[0].cache_coherent = true;
+        state->devices[0].back_invalidate = true;
+        snprintf(state->devices[0].dax_path, sizeof(state->devices[0].dax_path),
+                 "numa_node%d", nvshmemi_cxl_heap_numa_node());
+    }
     state->devices[0].dax_fd = -1;  /* Not using DAX */
 
     state->type3_dev_indices[0] = 0;
@@ -515,6 +523,19 @@ int nvshmemt_cxl_can_reach_peer(int *access, struct nvshmem_transport_pe_info *p
         return 0;
     }
 
+    /* Forced NUMA-tier mode: every same-host peer is reachable through the
+     * shared CXL heap slab, which both CPU and GPU address directly. */
+    if (nvshmemi_options.CXL_FORCE) {
+        *access = NVSHMEM_TRANSPORT_CAP_MAP |
+                  NVSHMEM_TRANSPORT_CAP_MAP_GPU_ST |
+                  NVSHMEM_TRANSPORT_CAP_MAP_GPU_LD |
+                  NVSHMEM_TRANSPORT_CAP_MAP_GPU_ATOMICS |
+                  NVSHMEM_TRANSPORT_CAP_CPU_WRITE |
+                  NVSHMEM_TRANSPORT_CAP_CPU_READ |
+                  NVSHMEM_TRANSPORT_CAP_CPU_ATOMICS;
+        return 0;
+    }
+
     /* Check if peer is a Type 3 device in our pool */
     for (int i = 0; i < cxl_state->n_type3_dev; i++) {
         int idx = cxl_state->type3_dev_indices[i];
@@ -564,26 +585,16 @@ int nvshmemt_cxl_connect_endpoints(struct nvshmem_transport *tcurr, int *selecte
 
 /*
  * Get memory handle for a buffer
+ *
+ * The heap slab is mapped into every same-node PE, so a handle carries only
+ * the buffer's address and length.  No buffer allocation, no copy, nothing to
+ * release: the receiving side resolves remote addresses through its own
+ * mapping of the shared slab (see nvshmemt_cxl_rma).
  */
 int nvshmemt_cxl_get_mem_handle(nvshmem_mem_handle_t *mem_handle, void *buf, size_t size,
                                  struct nvshmem_transport *transport, bool local_only) {
-    transport_cxl_state_t *cxl_state = (transport_cxl_state_t *)transport->state;
-
-    /* Allocate a CXL buffer and register it */
-    uint64_t buffer_id = cxl_alloc_buffer(cxl_state, size);
-    if (buffer_id == 0) {
-        return NVSHMEMX_ERROR_OUT_OF_MEMORY;
-    }
-
-    /* Copy data to CXL buffer if source provided */
-    if (buf) {
-        void *cxl_ptr = cxl_get_buffer_ptr(cxl_state, buffer_id);
-        memcpy(cxl_ptr, buf, size);
-    }
-
-    /* Store buffer ID in handle */
     memset(mem_handle, 0, sizeof(*mem_handle));
-    MEM_HANDLE_DATA(mem_handle)[0] = buffer_id;
+    MEM_HANDLE_DATA(mem_handle)[0] = (uint64_t)(uintptr_t)buf;
     MEM_HANDLE_DATA(mem_handle)[1] = size;
 
     return 0;
@@ -594,10 +605,23 @@ int nvshmemt_cxl_get_mem_handle(nvshmem_mem_handle_t *mem_handle, void *buf, siz
  */
 int nvshmemt_cxl_release_mem_handle(nvshmem_mem_handle_t *mem_handle,
                                      struct nvshmem_transport *transport) {
-    transport_cxl_state_t *cxl_state = (transport_cxl_state_t *)transport->state;
+    /* Handles are pure {address, length} pairs; nothing to release. */
+    return 0;
+}
 
-    uint64_t buffer_id = MEM_HANDLE_DATA(mem_handle)[0];
-    return cxl_free_buffer(cxl_state, buffer_id);
+/*
+ * Translate a remote heap offset to a locally dereferenceable pointer.
+ *
+ * Every same-node PE maps the whole CXL heap slab; PE i's window starts at
+ * slab + i * window_size (single-node PE numbering).  The rma/amo callbacks
+ * only run for peers the mapped-RMA fast path could not handle, but they must
+ * still land on the right physical pages.
+ */
+static void *cxl_local_addr_for_pe(nvshmem_transport_t tcurr, int pe, uint64_t offset) {
+    void *slab = nvshmemi_cxl_heap_slab_base();
+    size_t window = nvshmemi_cxl_heap_window_size();
+    if (!slab || window == 0) return NULL;
+    return (char *)slab + (uint64_t)pe * window + offset;
 }
 
 /*
@@ -606,18 +630,35 @@ int nvshmemt_cxl_release_mem_handle(nvshmem_mem_handle_t *mem_handle,
 int nvshmemt_cxl_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb,
                      rma_memdesc_t *remote, rma_memdesc_t *local, rma_bytesdesc_t bytesdesc,
                      int qp_index) {
-    transport_cxl_state_t *cxl_state = (transport_cxl_state_t *)tcurr->state;
     size_t size = bytesdesc.nelems * bytesdesc.elembytes;
+
+    /* Symmetric heap traffic: resolve through my mapping of the shared slab. */
+    void *remote_addr = cxl_local_addr_for_pe(tcurr, pe, remote->offset);
+    if (remote_addr) {
+        if (verb.desc == NVSHMEMI_OP_PUT || verb.desc == NVSHMEMI_OP_P) {
+            cudaError_t err =
+                cudaMemcpy(remote_addr, local->ptr, size, cudaMemcpyDefault);
+            return (err == cudaSuccess) ? 0 : NVSHMEMX_ERROR_INTERNAL;
+        } else if (verb.desc == NVSHMEMI_OP_GET || verb.desc == NVSHMEMI_OP_G) {
+            cudaError_t err =
+                cudaMemcpy(local->ptr, remote_addr, size, cudaMemcpyDefault);
+            return (err == cudaSuccess) ? 0 : NVSHMEMX_ERROR_INTERNAL;
+        }
+        return NVSHMEMX_ERROR_INVALID_VALUE;
+    }
+
+    /* Non-heap (externally registered) buffers keep the registered-buffer
+     * data path. */
+    transport_cxl_state_t *cxl_state = (transport_cxl_state_t *)tcurr->state;
+    uint64_t buffer_id = MEM_HANDLE_DATA(remote->handle)[0];
 
     if (verb.desc == NVSHMEMI_OP_PUT) {
         /* PUT: local -> remote (GPU to CXL) */
-        uint64_t buffer_id = MEM_HANDLE_DATA(remote->handle)[0];
         return cxl_gpu_to_cxl(cxl_state, buffer_id,
                               (uint64_t)(uintptr_t)local->ptr,
                               remote->offset, size);
     } else if (verb.desc == NVSHMEMI_OP_GET) {
         /* GET: remote -> local (CXL to GPU) */
-        uint64_t buffer_id = MEM_HANDLE_DATA(remote->handle)[0];
         return cxl_cxl_to_gpu(cxl_state, buffer_id,
                               (uint64_t)(uintptr_t)local->ptr,
                               remote->offset, size);
@@ -631,17 +672,18 @@ int nvshmemt_cxl_rma(struct nvshmem_transport *tcurr, int pe, rma_verb_t verb,
  */
 int nvshmemt_cxl_amo(struct nvshmem_transport *tcurr, int pe, void *curetptr, amo_verb_t verb,
                      amo_memdesc_t *target, amo_bytesdesc_t bytesdesc, int qp_index) {
-    transport_cxl_state_t *cxl_state = (transport_cxl_state_t *)tcurr->state;
-
     /* For CXL Type 3 with back-invalidate, atomics go through CPU */
     /* Map the target buffer and perform atomic operation */
-    uint64_t buffer_id = MEM_HANDLE_DATA(target->remote_memdesc.handle)[0];
-    void *cxl_ptr = cxl_get_buffer_ptr(cxl_state, buffer_id);
-    if (!cxl_ptr) {
-        return NVSHMEMX_ERROR_INVALID_VALUE;
+    void *target_addr = cxl_local_addr_for_pe(tcurr, pe, target->remote_memdesc.offset);
+    if (!target_addr) {
+        transport_cxl_state_t *cxl_state = (transport_cxl_state_t *)tcurr->state;
+        uint64_t buffer_id = MEM_HANDLE_DATA(target->remote_memdesc.handle)[0];
+        void *cxl_ptr = cxl_get_buffer_ptr(cxl_state, buffer_id);
+        if (!cxl_ptr) {
+            return NVSHMEMX_ERROR_INVALID_VALUE;
+        }
+        target_addr = (char *)cxl_ptr + target->remote_memdesc.offset;
     }
-
-    void *target_addr = (char *)cxl_ptr + target->remote_memdesc.offset;
 
     /* Perform atomic operation on CPU (CXL.cache ensures coherency) */
     switch (verb.desc) {
@@ -704,9 +746,13 @@ int nvshmemt_cxl_show_info(struct nvshmem_transport *transport, int style) {
 
     printf("CXL Transport Info:\n");
     printf("  CXL Link Up: %s\n", cxl_state->rm_ctx.cxl_link_up ? "Yes" : "No");
+    printf("  Forced NUMA-tier mode: %s\n", nvshmemi_options.CXL_FORCE ? "Yes" : "No");
     printf("  CXL Version: %d\n", cxl_state->rm_ctx.cxlVersion);
     printf("  P2P DMA Available: %s\n", cxl_state->rm_ctx.p2p_dma_available ? "Yes" : "No");
     printf("  Type 3 Devices: %d\n", cxl_state->n_type3_dev);
+    printf("  Heap slab: %p (window %zu bytes, NUMA node %d)\n",
+           nvshmemi_cxl_heap_slab_base(), nvshmemi_cxl_heap_window_size(),
+           nvshmemi_cxl_heap_numa_node());
 
     for (int i = 0; i < cxl_state->n_type3_dev; i++) {
         int idx = cxl_state->type3_dev_indices[i];
@@ -831,10 +877,25 @@ int nvshmemt_cxl_init(nvshmem_transport_t *t) {
     if (status != 0) {
         INFO(NVSHMEM_TRANSPORT, "RM context init failed, CXL P2P DMA disabled\n");
         cxl_state->rm_ctx.p2p_dma_available = false;
+        if (nvshmemi_options.CXL_FORCE) {
+            /* Consumer drivers (GeForce) reject RM CXL queries.  In forced
+             * mode the tier is host DRAM on the CXL NUMA node, which the GPU
+             * reaches through the zero-copy aperture; RM is not in the path. */
+            INFO(NVSHMEM_TRANSPORT,
+                 "CXL_FORCE enabled: continuing without RM, NUMA-tier mode\n");
+            memset(&cxl_state->rm_ctx, 0, sizeof(cxl_state->rm_ctx));
+            cxl_state->rm_ctx.cxl_link_up = true;
+            cxl_state->rm_ctx.p2p_dma_available = false;
+        }
     } else {
         /* Query CXL capabilities */
         status = cxl_query_info(cxl_state);
         cxl_state->rm_ctx.p2p_dma_available = (status == 0 && cxl_state->rm_ctx.cxl_link_up);
+        if (status != 0 && nvshmemi_options.CXL_FORCE) {
+            INFO(NVSHMEM_TRANSPORT,
+                 "CXL_FORCE enabled: overriding failed CXL capability query\n");
+            cxl_state->rm_ctx.cxl_link_up = true;
+        }
     }
 
     /* Discover CXL Type 3 devices */

@@ -369,5 +369,13 @@ NVSHMEMI_ENV_DEF(CXL_P2P_THRESHOLD, size, (size_t)(256 * 1024), NVSHMEMI_ENV_CAT
 NVSHMEMI_ENV_DEF(CXL_PREFER_P2P_DMA, bool, true, NVSHMEMI_ENV_CAT_HIDDEN,
                  "Prefer P2P DMA for GPU-CXL transfers when available. "
                  "Set to false to always use CUDA mapped memory.")
+NVSHMEMI_ENV_DEF(CXL_FORCE, bool, false, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "Treat the node-local CXL NUMA tier as reachable without NVIDIA RM CXL "
+                 "capability reporting. Use on platforms (e.g. consumer drivers with a "
+                 "CXL memory expander on a CPU-less NUMA node) where the RM CXL query "
+                 "always fails. Pairs with NVSHMEM_HEAP_KIND=CXL.")
+NVSHMEMI_ENV_DEF(CXL_NUMA_NODE, int, -1, NVSHMEMI_ENV_CAT_TRANSPORT,
+                 "NUMA node the CXL symmetric heap is bound to. -1 auto-detects a "
+                 "CPU-less node, -2 disables binding, >=0 is an explicit node id.")
 
 #endif

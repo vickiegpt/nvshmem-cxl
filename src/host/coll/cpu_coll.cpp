@@ -111,7 +111,7 @@ void nvshmemi_coll_common_cpu_check_ll128_availability() {
              nvshmemi_state->is_platform_nvl, nvshmemi_state->are_nics_ll128_compliant);
         nvshmemi_device_state.gpu_coll_env_params_var.fcollect_ll128_threshold = 0;
     }
-    if (nvshmemi_device_state.symmetric_heap_kind == NVSHMEMI_HEAP_KIND_SYSMEM) {
+    if (nvshmemi_host_heap_kind != NVSHMEMI_HEAP_KIND_VIDMEM) {
         INFO(NVSHMEM_INIT, "Disabling LL128 due to system memory being used in heap.");
         nvshmemi_device_state.gpu_coll_env_params_var.fcollect_ll128_threshold = 0;
     }

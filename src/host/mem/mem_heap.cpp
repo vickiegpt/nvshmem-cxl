@@ -55,6 +55,9 @@
 static_assert(sizeof(CUmemGenericAllocationHandle) <= NVSHMEM_MEM_HANDLE_SIZE,
               "sizeof(CUmemGenericAllocationHandle) <= NVSHMEM_MEM_HANDLE_SIZE");
 
+class nvshmemi_symmetric_heap_cxl_type3;
+extern "C" nvshmemi_symmetric_heap *nvshmemi_create_cxl_type3_heap(nvshmemi_state_t *state);
+
 /**
  * By OpenSHMEM spec standard, coll sync are not needed
  * if size == 0 or if ptr is NULL
@@ -73,6 +76,7 @@ void nvshmemi_init_symmetric_heap(nvshmemi_state_t *state, bool is_vmm, int heap
     nvshmemi_symmetric_heap_sysmem_static_shm *nvshmemi_sysmem_shm = nullptr;
     nvshmemi_symmetric_heap_vidmem_dynamic_vmm *nvshmemi_vidmem_vmm = nullptr;
     nvshmemi_symmetric_heap_vidmem_static_pinned *nvshmemi_vidmem_static = nullptr;
+    nvshmemi_symmetric_heap *nvshmemi_cxl_heap = nullptr;
 
     if (state->heap_obj != nullptr) {
         return;
@@ -87,11 +91,15 @@ void nvshmemi_init_symmetric_heap(nvshmemi_state_t *state, bool is_vmm, int heap
     } else if (nvshmemi_vidmem_static == nullptr && heap_kind == NVSHMEMI_HEAP_KIND_VIDMEM) {
         nvshmemi_vidmem_static = new nvshmemi_symmetric_heap_vidmem_static_pinned(state);
         state->heap_obj = dynamic_cast<nvshmemi_symmetric_heap *>(nvshmemi_vidmem_static);
+    } else if (nvshmemi_cxl_heap == nullptr && heap_kind == NVSHMEMI_HEAP_KIND_CXL_TYPE3) {
+        nvshmemi_cxl_heap = nvshmemi_create_cxl_type3_heap(state);
+        state->heap_obj = dynamic_cast<nvshmemi_symmetric_heap *>(nvshmemi_cxl_heap);
     }
 
     if (state->heap_obj == nullptr) {
-        NVSHMEMI_ERROR_EXIT("Requested Heap Kind: %d(0-VIDMEM,1-SYSMEM,>3-INVALID), with VMM: %s\n",
-                            heap_kind, (is_vmm ? "Yes" : "No"));
+        NVSHMEMI_ERROR_EXIT(
+            "Requested Heap Kind: %d(0-VIDMEM,1-SYSMEM,2-CXL,>3-INVALID), with VMM: %s\n",
+            heap_kind, (is_vmm ? "Yes" : "No"));
     }
 }
 
@@ -109,6 +117,10 @@ void nvshmemi_fini_symmetric_heap(nvshmemi_state_t *state) {
         auto *vidmem_obj =
             dynamic_cast<nvshmemi_symmetric_heap_vidmem_static_pinned *>(state->heap_obj);
         NVSHMEMU_HOST_PTR_DELETE(vidmem_obj);
+    } else if (nvshmemi_host_heap_kind == NVSHMEMI_HEAP_KIND_CXL_TYPE3) {
+        /* The CXL Type 3 heap class is local to mem_heap_cxl.cpp; its
+         * destructor is virtual and runs the shared cleanup path. */
+        NVSHMEMU_HOST_PTR_DELETE(state->heap_obj);
     }
 
     state->heap_obj = nullptr;

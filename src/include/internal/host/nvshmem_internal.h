@@ -120,6 +120,11 @@ extern int nvshmemi_can_flush_remote_writes;
 extern uint64_t *nvshmemi_host_hashes;
 extern nvshmem_options_t nvshmem_options;
 extern int nvshmemi_cuda_driver_version;
+
+/* Exact NVSHMEMI_HEAP_KIND_* (0-VIDMEM, 1-SYSMEM, 2-CXL_TYPE3).  Defined in
+ * init.cu; the device-visible symmetric_heap_kind bool only records
+ * "host-backed" because the device state layout is size-pinned. */
+extern int nvshmemi_host_heap_kind;
 extern int nvshmemi_use_nccl;
 extern int nvshmemi_disable_ce_collectives;
 extern bool nvshmemi_disable_self_write_ce_coll;

@@ -1,0 +1,4 @@
+mode	weights_mib	gpu_ms	tok_s	weight_read_gbps	publish_ns	stage_ms	publishes_per_copy	opt_ms	stale
+vram	16	0.48	35842.3	611.9	65	0.68	10462	3.50	
+vram	64	1.10	15236.3	1036.6	356	3.38	9508	14.30	
+vram	256	4.89	3263.2	878.5	731	12.20	16689	57.10	

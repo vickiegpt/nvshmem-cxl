@@ -465,6 +465,9 @@ typedef struct {
     size_t heap_size;
     void **peer_heap_base_p2p;
     void **peer_heap_base_remote;
+    /* Device-visible flag: true when the heap is host-backed (SYSMEM or CXL
+     * Type 3).  The exact kind lives in the host-only nvshmemi_host_heap_kind
+     * because the device state layout is size-pinned. */
     bool symmetric_heap_kind;
     bool enable_rail_opt;
     uint32_t atomics_le_min_size;

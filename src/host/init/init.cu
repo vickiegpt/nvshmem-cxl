@@ -73,6 +73,11 @@ int nvshmemi_can_use_cuda_64_bit_stream_memops = false;
 int nvshmemi_can_flush_remote_writes = false;
 int nvshmemi_is_vmm_supported = false;
 int bootstrap_mode;
+
+/* Exact NVSHMEMI_HEAP_KIND_* selected at init.  The device-visible
+ * nvshmemi_device_state.symmetric_heap_kind is a layout-pinned bool that only
+ * records whether the heap is host-backed. */
+int nvshmemi_host_heap_kind = NVSHMEMI_HEAP_KIND_VIDMEM;
 FILE *nvshmem_debug_file = stdout;
 static char shm_name[100];
 nvshmemi_version_t nvshmemi_host_lib_version = {
@@ -1013,12 +1018,19 @@ int nvshmemi_common_init(nvshmemi_state_t *state, nvshmemx_init_attr_t *attr) {
 
     CUDA_RUNTIME_CHECK(cudaDriverGetVersion(&nvshmemi_cuda_driver_version));
     if (strncasecmp(nvshmemi_options.HEAP_KIND, "SYSMEM", 100) == 0) {
-        nvshmemi_device_state.symmetric_heap_kind = NVSHMEMI_HEAP_KIND_SYSMEM;
+        nvshmemi_host_heap_kind = NVSHMEMI_HEAP_KIND_SYSMEM;
         INFO(NVSHMEM_INIT, "NVSHMEM symmetric heap kind = SYSMEM selected");
+    } else if (strncasecmp(nvshmemi_options.HEAP_KIND, "CXL", 100) == 0) {
+        nvshmemi_host_heap_kind = NVSHMEMI_HEAP_KIND_CXL_TYPE3;
+        INFO(NVSHMEM_INIT, "NVSHMEM symmetric heap kind = CXL (Type 3) selected");
     } else {
-        nvshmemi_device_state.symmetric_heap_kind = NVSHMEMI_HEAP_KIND_VIDMEM;
+        nvshmemi_host_heap_kind = NVSHMEMI_HEAP_KIND_VIDMEM;
         INFO(NVSHMEM_INIT, "NVSHMEM symmetric heap kind = DEVICE selected");
     }
+    /* The device state field is a layout-pinned bool that only records
+     * "host-backed"; the exact kind lives in nvshmemi_host_heap_kind. */
+    nvshmemi_device_state.symmetric_heap_kind =
+        (nvshmemi_host_heap_kind != NVSHMEMI_HEAP_KIND_VIDMEM);
 
     if (nvshmemi_options.ENABLE_RAIL_OPT == 1) {
         /* Check if npes_node is same on all nodes */
@@ -1039,7 +1051,7 @@ int nvshmemi_common_init(nvshmemi_state_t *state, nvshmemx_init_attr_t *attr) {
         free(npes_node_all);
 
         if (i == nvshmemi_boot_handle.pg_size &&
-            nvshmemi_device_state.symmetric_heap_kind == NVSHMEMI_HEAP_KIND_SYSMEM) {
+            nvshmemi_host_heap_kind != NVSHMEMI_HEAP_KIND_VIDMEM) {
             nvshmemi_device_state.enable_rail_opt = 1;
             INFO(NVSHMEM_INIT, "Enabling Rail Optimization");
         } else {
@@ -1073,8 +1085,7 @@ int nvshmemi_common_init(nvshmemi_state_t *state, nvshmemx_init_attr_t *attr) {
 
     /* Context needs to be retrieved and memops flag need to be applied before heap is initialized
      */
-    nvshmemi_init_symmetric_heap(state, nvshmemi_use_cuda_vmm,
-                                 nvshmemi_device_state.symmetric_heap_kind);
+    nvshmemi_init_symmetric_heap(state, nvshmemi_use_cuda_vmm, nvshmemi_host_heap_kind);
 
     /* Detect NVLS support before increasing max teams count for NVLS capable platform
      * Depends on heap type being discovered aprior
